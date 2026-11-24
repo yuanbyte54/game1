@@ -1,0 +1,2 @@
+window.CHARACTERS={youzi:{name:'柚子',color:'#628a94',tag:'在数字之外，相信一个人',bio:'数学分析爱好者。安静而敏锐，习惯先求证，再下结论。'},huge:{name:'胡哥',color:'#b9875e',tag:'这一次，不必独自接球',bio:'羽毛球队主力。直爽护短，最不擅长解释自己。'},mage:{name:'马哥',color:'#8b86a0',tag:'如果不再问第几名',bio:'温和的同桌，记得每个人的成绩，也记得鱼尾的习惯。'},yuanba:{name:'元吧',color:'#ac8e83',tag:'让沉默，终于有了回声',bio:'数学课代表。总带着糖果，笑容后面藏着不敢说的话。'}};
+window.SUSPECTS={youzi:'柚子',huge:'胡哥',mage:'马哥',yuanba:'元吧',lin:'林岚 · 校刊社社长',zhou:'周老师 · 年级教务员'};

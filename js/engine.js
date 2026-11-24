@@ -1,0 +1,44 @@
+/* 数据驱动状态机。每个阻塞节点的坐标均可存档；播放模式不写入存档。 */
+window.Game=(function(){
+var state=null,mode='off',hold=false,lastAuto=0,started=false;const $=UI.$;
+const compiled=STORY.map(ch=>ch.scenes.flatMap(s=>[{type:'scene',name:s.name},...s.commands]));
+function fresh(){return {version:CONFIG.version,chapter:0,pos:0,bg:'classroom',cast:[],clues:[],affection:{youzi:0,huge:0,mage:0,yuanba:0},flags:{},solved:[],cold:CONFIG.coldMax,history:[],pending:null,ending:null};}
+function command(){return state?compiled[state.chapter][state.pos]:null;}
+function readKey(){return state.chapter+':'+state.pos+(state.pending?':reply':'');}
+function pause(){mode='off';hold=false;$('autoBtn').classList.remove('active');$('skipBtn').classList.remove('active');}
+function autosave(){if(state)Save.slot('auto',state);}
+function addClue(id){if(!state.clues.includes(id)){state.clues.push(id);Sound.beep('clue');UI.toast('线索已收录：'+CLUES[id].title);autosave();}}
+function log(who,text){var last=state.history.at(-1),key=readKey();if(!last||last.key!==key||last.text!==text){state.history.push({who,text,key});if(state.history.length>1000)state.history.shift();}}
+function checkpoint(){if(!Save.profile.checkpoints[state.chapter]){Save.profile.checkpoints[state.chapter]=Save.copy(state);Save.persist();}UI.preload(state.chapter+1,false);}
+function markRead(){var key=readKey();if(!Save.profile.read.includes(key)){Save.profile.read.push(key);Save.persist();}}
+function next(){if(!state)return;markRead();if(state.pending){var jump=state.pending.jump;state.pending=null;if(jump){goChapter(STORY.findIndex(c=>c.id===jump));return;}state.pos++;}else state.pos++;render();}
+function goChapter(i){state.chapter=i;state.pos=0;state.cast=[];state.pending=null;state.cold=CONFIG.coldMax;checkpoint();Sound.play(i>=4?'tension':'calm');render();}
+function reply(who,text,jump){state.pending={who,text,jump:jump||null};render();}
+function applyOption(o){if(o.affection)Object.entries(o.affection).forEach(([id,n])=>state.affection[id]+=n);if(o.flag)Object.assign(state.flags,o.flag);if(o.reply){reply(o.who?CHARACTERS[o.who].name:'鱼尾',o.reply,o.jump);return;}if(o.jump){goChapter(STORY.findIndex(c=>c.id===o.jump));return;}next();}
+function choice(cmd){pause();$('app').classList.add('panel-active');var box=$('interaction');box.hidden=false;box.append(UI.el('span','badge','你的选择'),UI.el('h3','',cmd.text));var choices=UI.el('div','options');cmd.options.forEach(o=>choices.append(UI.button(o.text,()=>applyOption(o))));box.append(choices);UI.line('鱼尾','每一次选择，都在决定我们如何靠近真相，也如何靠近彼此。',true);}
+function render(){if(!state)return;UI.resetInteraction();$('home').hidden=true;$('play').hidden=false;$('app').classList.add('playing');$('chapterLabel').textContent=STORY[state.chapter].title;var guard=0;
+while(guard++<300){var cmd=command();if(!cmd){if(state.chapter+1<STORY.length){goChapter(state.chapter+1);return;}finishEnding();return;}
+if(state.pending){UI.cast(state,state.pending.who);UI.line(state.pending.who,state.pending.text);log(state.pending.who,state.pending.text);break;}
+if(cmd.type==='scene'){$('sceneLabel').textContent=cmd.name;state.sceneName=cmd.name;state.pos++;continue;}
+if(cmd.type==='background'){state.bg=cmd.id;UI.background(cmd.id);state.pos++;continue;}
+if(cmd.type==='show'){state.cast=state.cast.filter(a=>a.who!==cmd.who&&a.position!==cmd.position);state.cast.push({who:cmd.who,expression:cmd.expression,position:cmd.position});state.pos++;continue;}
+if(cmd.type==='hide'){state.cast=[];state.pos++;continue;}
+if(cmd.type==='clue'){addClue(cmd.id);state.pos++;continue;}
+if(cmd.type==='affection'){state.affection[cmd.who]+=cmd.value;state.pos++;continue;}
+if(cmd.type==='audio'){Sound.play(cmd.id);state.pos++;continue;}
+if(cmd.type==='label'){state.pos++;continue;}
+if(cmd.type==='if'){if(state.flags[cmd.flag]){var dest=compiled[state.chapter].findIndex(x=>x.type==='label'&&x.id===cmd.jumpLabel);if(dest<0)throw Error('缺少跳转标签');state.pos=dest;}else state.pos++;continue;}
+if(cmd.type==='jump'){var target=compiled[state.chapter].findIndex(x=>x.type==='label'&&x.id===cmd.label);if(target<0)throw Error('缺少跳转标签');state.pos=target;continue;}
+UI.cast(state,cmd.who);if(cmd.type==='say'||cmd.type==='narrate'){var who=cmd.who||'鱼尾 · 心声';UI.line(who,cmd.text);log(who,cmd.text);}else if(cmd.type==='choice')choice(cmd);else if(['investigate','confront','board'].includes(cmd.type)){pause();Deduction[cmd.type](cmd);}else if(cmd.type==='ending'){finishEnding();return;}else throw Error('未知指令 '+cmd.type);break;}
+$('lineCounter').textContent=String(state.chapter).padStart(2,'0')+' / '+String(STORY.length-1).padStart(2,'0');$('sceneLabel').textContent=state.sceneName||STORY[state.chapter].title;UI.background(state.bg);lastAuto=Date.now();autosave();}
+function advance(){if(!state||$('modal').open||$('play').hidden)return;Sound.activate();var cmd=command();if(state.pending||cmd&&['say','narrate'].includes(cmd.type)){if(!UI.done){UI.finish();lastAuto=Date.now();return;}Sound.beep('page');next();}}
+function finishEnding(){pause();state.ending=resolveEnding(state);if(!Save.profile.endings.includes(state.ending)){Save.profile.endings.push(state.ending);Save.persist();}autosave();UI.line('终章','故事在这里暂时合上。你可以查看结局图鉴，或从已到达的章节重新出发。',true);UI.ending(state.ending,false);}
+async function start(){if(started)return;if(state&&!confirm('开始新故事？当前进度已自动保存，建议先存入手动槽。'))return;started=true;try{Sound.activate();state=fresh();await UI.preload(0,true);checkpoint();Sound.play('calm');render();}finally{started=false;}}
+function load(s){pause();state=Save.valid(s);$('home').hidden=true;$('play').hidden=false;UI.background(state.bg);Sound.play(state.chapter>=4?'tension':'calm');if(state.ending){$('app').classList.add('playing');$('chapterLabel').textContent=STORY[state.chapter].title;UI.resetInteraction();UI.cast(state);UI.line('终章','这一页已经写完。你可以从图鉴回放章节。',true);UI.ending(state.ending,false);}else render();}
+function home(){pause();autosave();$('home').hidden=false;$('play').hidden=true;$('app').classList.remove('playing');$('cast').replaceChildren();$('chapterLabel').textContent='一封没有寄出的校刊';UI.background('roof');$('continueBtn').disabled=!Save.profile.slots.auto;Sound.play('calm');}
+function toggle(type){if(!state)return;mode=mode===type?'off':type;lastAuto=Date.now();$('autoBtn').classList.toggle('active',mode==='auto');$('skipBtn').classList.toggle('active',mode==='skip');}
+setInterval(()=>{if(!state||$('modal').open||document.hidden||$('play').hidden)return;var cmd=command();if(!(state.pending||cmd&&['say','narrate'].includes(cmd.type)))return;if(mode==='skip'||hold){if(Save.profile.read.includes(readKey())){UI.finish();next();}else if(mode==='skip'){pause();UI.toast('已到达未读内容');}}else if(mode==='auto'&&UI.done&&Date.now()-lastAuto>Save.profile.settings.autoDelay+((state.pending?.text||cmd.text||'').length*Save.profile.settings.textSpeed)){next();}},CONFIG.skipDelay);
+$('dialogue').onclick=()=>{if(suppressClick){suppressClick=false;return;}advance();};$('startBtn').onclick=start;$('continueBtn').onclick=()=>{Sound.activate();try{load(Save.load('auto'));}catch(e){UI.toast(e.message);}};$('autoBtn').onclick=()=>toggle('auto');$('skipBtn').onclick=()=>toggle('skip');$('brand').onclick=e=>{e.preventDefault();UI.menu();};
+document.addEventListener('keydown',e=>{if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if($('modal').open)return;if(e.key==='Control'){hold=true;return;}if(e.key==='Escape'){e.preventDefault();UI.menu();return;}if([' ','Enter'].includes(e.key)){if(e.target.tagName==='BUTTON'||e.target.tagName==='A')return;e.preventDefault();advance();}if(e.key.toLowerCase()==='h')UI.history();if(e.key.toLowerCase()==='s'){e.preventDefault();UI.savePanel();}});document.addEventListener('keyup',e=>{if(e.key==='Control')hold=false;});
+var pressTimer,suppressClick=false;$('dialogue').addEventListener('pointerdown',()=>{pressTimer=setTimeout(()=>{hold=true;suppressClick=true;},450);});function release(){clearTimeout(pressTimer);hold=false;}window.addEventListener('pointerup',release);window.addEventListener('pointercancel',release);document.addEventListener('contextmenu',e=>{if(!/TEXTAREA|INPUT/.test(e.target.tagName))e.preventDefault();});document.addEventListener('visibilitychange',()=>{if(document.hidden){pause();Sound.pause();}else Sound.resume();});window.addEventListener('blur',()=>{pause();Sound.pause();});window.addEventListener('focus',()=>Sound.resume());window.addEventListener('beforeunload',autosave);document.addEventListener('pointerdown',()=>Sound.activate(),{once:true});home();if(!Save.available)setTimeout(()=>UI.toast('浏览器存储不可用，请使用导出存档保留进度。'),700);
+return {get state(){return state;},get mode(){return mode;},compiled,command,start,load,home,render,next,advance,pause,autosave,addClue,reply};})();
